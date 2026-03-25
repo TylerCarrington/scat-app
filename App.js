@@ -273,7 +273,7 @@ function TurnGateScreen({ player, onReveal, onExit }) {
 }
 
 // GAME BOARD SCREEN
-function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickUp, onKnock, onDiscard, mustDiscard, hasKnocked, knockerName, onExit }) {
+function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickUp, onKnock, onDiscard, mustDiscard, hasKnocked, knockerName, knockRound, onExit }) {
   const score = handScore(hand);
   const [selectedCard, setSelectedCard] = useState(null);
 
@@ -361,9 +361,11 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
         {/* Actions */}
         {!mustDiscard ? (
           <View style={styles.actionsRow}>
-            <TouchableOpacity style={[styles.actionBtn, styles.knockBtn]} onPress={onKnock}>
-              <Text style={styles.knockBtnText}>KNOCK</Text>
-            </TouchableOpacity>
+            {!knockRound && (
+              <TouchableOpacity style={[styles.actionBtn, styles.knockBtn]} onPress={onKnock}>
+                <Text style={styles.knockBtnText}>KNOCK</Text>
+              </TouchableOpacity>
+            )}
           </View>
         ) : (
           <View style={styles.discardInstruction}>
@@ -397,7 +399,7 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
 }
 
 // ROUND SUMMARY SCREEN
-function RoundSummaryScreen({ players, hands, knockerId, onNextRound, onExit }) {
+function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNextRound, onExit }) {
   const scores = hands.map(h => handScore(h));
   const minScore = Math.min(...scores.filter((_, i) => players[i].lives > 0));
 
@@ -413,17 +415,21 @@ function RoundSummaryScreen({ players, hands, knockerId, onNextRound, onExit }) 
 
         {players.map((player, i) => {
           const score = scores[i];
-          const isLowest = score === minScore;
+          const isWinner = i === instantWinnerIdx;
+          const isLowest = instantWinnerIdx === null && score === minScore;
           const wasKnocker = i === knockerId;
           const lostTwo = wasKnocker && isLowest && players.filter(p => p.lives > 0).length > 1;
-          const lostLife = isLowest && player.lives > 0;
+          const lostLife = instantWinnerIdx !== null
+            ? !isWinner && player.lives > 0  // scat round: everyone else lost
+            : isLowest && player.lives > 0;
 
           return (
             <View key={i} style={[styles.summaryCard, player.lives <= 0 && styles.eliminatedCard]}>
               <View style={styles.summaryCardHeader}>
                 <View style={[styles.colorDot, { backgroundColor: player.color }]} />
                 <Text style={[styles.summaryPlayerName, { color: player.color }]}>{player.name}</Text>
-                {wasKnocker && <Text style={styles.knockerTag}>KNOCKED</Text>}
+                {isWinner && <Text style={styles.scatTag}>SCAT!</Text>}
+                {wasKnocker && !isWinner && <Text style={styles.knockerTag}>KNOCKED</Text>}
                 {player.lives <= 0 && <Text style={styles.eliminatedTag}>OUT</Text>}
               </View>
 
@@ -473,6 +479,35 @@ function GameOverScreen({ winner, onPlayAgain }) {
   );
 }
 
+// ─── SCAT SPLASH SCREEN ──────────────────────────────────────────────────────
+function ScatSplashScreen({ winner, hand, onContinue }) {
+  return (
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={BG_DARK} />
+      <View style={styles.scatContainer}>
+        <Text style={styles.scatFireworks}>🃏</Text>
+        <Text style={styles.scatTitle}>SCAT!</Text>
+        <View style={[styles.scatBadge, { borderColor: winner.color }]}>
+          <Text style={[styles.scatWinnerName, { color: winner.color }]}>{winner.name}</Text>
+        </View>
+        <Text style={styles.scatSubtitle}>hit 31!</Text>
+
+        <View style={styles.scatHandRow}>
+          {hand.map(card => (
+            <PlayingCard key={card.id} card={card} size="lg" />
+          ))}
+        </View>
+
+        <Text style={styles.scatNote}>All other players lose a life.</Text>
+
+        <TouchableOpacity style={styles.goldButton} onPress={onContinue}>
+          <Text style={styles.goldButtonText}>SEE RESULTS</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+
 // ─── EXIT CONFIRMATION MODAL ─────────────────────────────────────────────────
 function ExitConfirmModal({ visible, onConfirm, onCancel }) {
   return (
@@ -513,6 +548,8 @@ export default function App() {
   const [mustDiscard, setMustDiscard] = useState(false);
   const [roundOver, setRoundOver] = useState(false);
   const [instantWinnerIdx, setInstantWinnerIdx] = useState(null);
+  const [finalHands, setFinalHands] = useState([]);
+  const [playersSnapshot, setPlayersSnapshot] = useState([]);
 
   // ── Back button handling
   useEffect(() => {
@@ -561,6 +598,8 @@ export default function App() {
     setMustDiscard(false);
     setRoundOver(false);
     setInstantWinnerIdx(null);
+    setFinalHands([]);
+    setPlayersSnapshot([]);
 
     // First turn = player after dealer
     const firstIdx = nextActiveIdx(currentPlayers, dealer);
@@ -586,10 +625,10 @@ export default function App() {
     );
     setDeck(rest);
     setHands(newHands);
-    setMustDiscard(true);
-    // Check 31
     if (handScore(newHands[currentPlayerIdx]) === 31) {
       endRound(newHands, currentPlayerIdx);
+    } else {
+      setMustDiscard(true);
     }
   };
 
@@ -603,9 +642,10 @@ export default function App() {
     );
     setDiscardPile(newDiscard);
     setHands(newHands);
-    setMustDiscard(true);
     if (handScore(newHands[currentPlayerIdx]) === 31) {
       endRound(newHands, currentPlayerIdx);
+    } else {
+      setMustDiscard(true);
     }
   };
 
@@ -661,33 +701,37 @@ export default function App() {
   const endRound = (currentHands, winnerIdx) => {
     setRoundOver(true);
     setInstantWinnerIdx(winnerIdx ?? null);
-    triggerSummary(currentHands, winnerIdx ?? null);
+    setFinalHands(currentHands);
+    setPlayersSnapshot([...players]);
+    setScreen('scat');
   };
 
-  const triggerSummary = (finalHands, instantWinnerIdx = null) => {
+  const triggerSummary = (finalHandsArg, winnerIdx = null, currentPlayers = null) => {
+    const playersSnap = currentPlayers || players;
+    const activeSnap = playersSnap.filter(p => p.lives > 0);
     let updatedPlayers;
 
-    if (instantWinnerIdx !== null) {
+    if (winnerIdx !== null) {
       // Instant 31 win — every OTHER active player loses 1 life
-      updatedPlayers = players.map((p, i) => {
-        if (p.lives <= 0) return p;          // already out
-        if (i === instantWinnerIdx) return p; // winner loses nothing
+      updatedPlayers = playersSnap.map((p, i) => {
+        if (p.lives <= 0) return p;
+        if (i === winnerIdx) return p;
         return { ...p, lives: Math.max(0, p.lives - 1) };
       });
     } else {
       // Normal round end — find the lowest score among active players
-      const scores = finalHands.map((h, i) =>
-        players[i].lives > 0 ? handScore(h) : Infinity
+      const scores = finalHandsArg.map((h, i) =>
+        playersSnap[i].lives > 0 ? handScore(h) : Infinity
       );
       const activeScores = scores.filter(s => s !== Infinity);
       const minScore = Math.min(...activeScores);
       const knocker = knockerId;
 
-      updatedPlayers = players.map((p, i) => {
+      updatedPlayers = playersSnap.map((p, i) => {
         if (p.lives <= 0) return p;
         const isLowest = scores[i] === minScore;
         const wasKnocker = i === knocker;
-        const lostTwo = wasKnocker && isLowest && activePlayers.length > 1;
+        const lostTwo = wasKnocker && isLowest && activeSnap.length > 1;
         const lostOne = isLowest && !lostTwo;
         let newLives = p.lives;
         if (lostTwo) newLives = Math.max(0, newLives - 2);
@@ -720,7 +764,7 @@ export default function App() {
   };
 
   // ─── RENDER ──────────────────────────────────────────────────────────────
-  const inGame = ['gate', 'board', 'summary'].includes(screen);
+  const inGame = ['gate', 'board', 'scat', 'summary'].includes(screen);
 
   if (screen === 'home') {
     return <HomeScreen onNewGame={() => setScreen('setup')} />;
@@ -772,6 +816,7 @@ export default function App() {
           mustDiscard={mustDiscard}
           hasKnocked={knockRound}
           knockerName={knockerId !== null ? players[knockerId]?.name : ''}
+          knockRound={knockRound}
           onExit={() => setShowExitModal(true)}
         />
         <ExitConfirmModal
@@ -783,13 +828,32 @@ export default function App() {
     );
   }
 
+  if (screen === 'scat') {
+    return (
+      <>
+        <ScatSplashScreen
+          winner={playersSnapshot[instantWinnerIdx] || players[instantWinnerIdx]}
+          hand={finalHands[instantWinnerIdx] || []}
+          onContinue={() => triggerSummary(finalHands, instantWinnerIdx, playersSnapshot)}
+        />
+        <ExitConfirmModal
+          visible={showExitModal}
+          onConfirm={handleExitToHome}
+          onCancel={() => setShowExitModal(false)}
+        />
+      </>
+    );
+  }
+
   if (screen === 'summary') {
+    const summaryHands = finalHands.length > 0 ? finalHands : hands;
     return (
       <>
         <RoundSummaryScreen
           players={players}
-          hands={hands}
+          hands={summaryHands}
           knockerId={knockerId}
+          instantWinnerIdx={instantWinnerIdx}
           onNextRound={handleNextRound}
           onExit={() => setShowExitModal(true)}
         />
@@ -1499,6 +1563,19 @@ const styles = StyleSheet.create({
     fontFamily: 'Georgia',
     flex: 1,
   },
+  scatTag: {
+    backgroundColor: '#1A2A00',
+    color: GOLD,
+    fontSize: 10,
+    fontWeight: '800',
+    letterSpacing: 1,
+    borderRadius: 6,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    fontFamily: 'Georgia',
+    borderWidth: 1,
+    borderColor: GOLD,
+  },
   knockerTag: {
     backgroundColor: '#2A1400',
     color: '#FF8C00',
@@ -1552,6 +1629,60 @@ const styles = StyleSheet.create({
     fontSize: 12,
     fontFamily: 'Georgia',
     fontStyle: 'italic',
+  },
+
+  // ── SCAT SPLASH ──
+  scatContainer: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 32,
+    gap: 16,
+  },
+  scatFireworks: {
+    fontSize: 64,
+    marginBottom: 8,
+  },
+  scatTitle: {
+    fontSize: 72,
+    fontWeight: '800',
+    color: GOLD,
+    letterSpacing: 12,
+    fontFamily: 'Georgia',
+    textShadowColor: GOLD,
+    textShadowOffset: { width: 0, height: 0 },
+    textShadowRadius: 20,
+  },
+  scatBadge: {
+    borderWidth: 2,
+    borderRadius: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 28,
+  },
+  scatWinnerName: {
+    fontSize: 28,
+    fontWeight: '800',
+    fontFamily: 'Georgia',
+    letterSpacing: 2,
+  },
+  scatSubtitle: {
+    color: TEXT_MUTED,
+    fontSize: 16,
+    fontFamily: 'Georgia',
+    fontStyle: 'italic',
+    marginTop: -8,
+  },
+  scatHandRow: {
+    flexDirection: 'row',
+    gap: 12,
+    marginVertical: 16,
+  },
+  scatNote: {
+    color: '#EF4444',
+    fontSize: 14,
+    fontFamily: 'Georgia',
+    fontStyle: 'italic',
+    marginBottom: 8,
   },
 
   // ── GAME OVER ──
