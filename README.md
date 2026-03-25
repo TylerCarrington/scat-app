@@ -89,7 +89,7 @@ Be the last player with lives remaining by scoring higher than opponents in each
 1. **Deal**: Each player receives 3 cards face down
 2. **Turns**: Players take turns drawing from stock or discard pile, then discard one card
 3. **Scoring**: Hand value is the highest total in any single suit, or 30.5 for three-of-a-kind
-4. **Knock**: A player can "knock" to end the round early, but loses 2 lives if they have the lowest score
+4. **Knock**: A player can "knock" to end the round early. If they don't have a score higher than at least one other player, they lose 2 lives
 5. **Round End**: When a player knocks, all players take one final turn
 6. **Life Loss**: Player with lowest score loses 1 life (or 2 if they knocked)
 7. **Win**: Last player with lives remaining wins

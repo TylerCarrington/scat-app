@@ -23,7 +23,6 @@ const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K']
 const RED_SUITS = ['♥', '♦'];
 
 const PLAYER_COLORS = ['#2DD4BF', '#F87171', '#FBBF24', '#A78BFA', '#34D399', '#FB7185'];
-const PLAYER_COLOR_NAMES = ['Teal', 'Coral', 'Amber', 'Violet', 'Emerald', 'Rose'];
 
 const GOLD = '#D4A843';
 const GOLD_LIGHT = '#F0C96A';
@@ -60,10 +59,10 @@ function cardValue(card) {
 }
 
 function handScore(hand) {
-  // Three of a kind = 30.5
-  const values = hand.map(c => c.rank);
-  if (values[0] === values[1] && values[1] === values[2]) return 30.5;
-  // Best same-suit total
+  if (hand.length === 3) {
+    const values = hand.map(c => c.rank);
+    if (values[0] === values[1] && values[1] === values[2]) return 30.5;
+  }
   let best = 0;
   for (const suit of SUITS) {
     const suitCards = hand.filter(c => c.suit === suit);
@@ -73,8 +72,41 @@ function handScore(hand) {
   return best;
 }
 
+// ─── ACTION HISTORY ───────────────────────────────────────────────────────────
+// Each action: { playerIdx, type, card? }
+// Types:
+//   'draw_stock'      – drew from stock pile (card is secret)
+//   'pickup_discard'  – picked up from discard (card is known)
+//   'discard'         – discarded a card (card is known)
+//   'knock'           – knocked
+
+function formatActionLine(action, players) {
+  const name = players[action.playerIdx]?.name ?? 'Someone';
+  switch (action.type) {
+    case 'draw_stock':
+      return `${name} drew from the pile`;
+    case 'pickup_discard':
+      return `${name} picked up ${action.card.rank}${action.card.suit}`;
+    case 'discard':
+      return `${name} discarded ${action.card.rank}${action.card.suit}`;
+    case 'knock':
+      return `${name} knocked!`;
+    default:
+      return '';
+  }
+}
+
+// Return actions that the viewing player should see:
+// - everything after their watermark
+// - EXCEPT their own draw_stock (they already know what they drew from stock)
+function getActionsForPlayer(allActions, watermark, viewingPlayerIdx) {
+  return allActions
+    .slice(watermark)
+    .filter(a => !(a.playerIdx === viewingPlayerIdx && a.type === 'draw_stock'));
+}
+
 // ─── CARD COMPONENT ──────────────────────────────────────────────────────────
-function PlayingCard({ card, size = 'md', selected, onPress, faceDown }) {
+function PlayingCard({ card, size = 'md', selected, onPress }) {
   const sizes = {
     sm: { w: 44, h: 62, rankFont: 10, suitFont: 14 },
     md: { w: 64, h: 90, rankFont: 14, suitFont: 22 },
@@ -82,16 +114,6 @@ function PlayingCard({ card, size = 'md', selected, onPress, faceDown }) {
   };
   const s = sizes[size];
   const isRed = card && RED_SUITS.includes(card.suit);
-
-  if (faceDown) {
-    return (
-      <View style={[styles.cardBase, { width: s.w, height: s.h }, styles.cardFaceDown]}>
-        <View style={styles.cardBackPattern}>
-          <Text style={{ color: GOLD, fontSize: 18 }}>♠</Text>
-        </View>
-      </View>
-    );
-  }
 
   return (
     <TouchableOpacity
@@ -129,9 +151,31 @@ function HeartsDisplay({ lives, max = 4 }) {
   );
 }
 
+// ─── ACTION FEED COMPONENT ───────────────────────────────────────────────────
+function ActionFeed({ actions, players }) {
+  if (!actions || actions.length === 0) return null;
+
+  return (
+    <View style={styles.feedContainer}>
+      <Text style={styles.feedTitle}>SINCE YOUR LAST TURN</Text>
+      {actions.map((action, i) => {
+        const player = players[action.playerIdx];
+        const isKnock = action.type === 'knock';
+        return (
+          <View key={i} style={styles.feedRow}>
+            <View style={[styles.feedDot, { backgroundColor: player?.color ?? GOLD }]} />
+            <Text style={[styles.feedText, isKnock && styles.feedTextKnock]}>
+              {formatActionLine(action, players)}
+            </Text>
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 // ─── SCREENS ─────────────────────────────────────────────────────────────────
 
-// HOME SCREEN
 function HomeScreen({ onNewGame }) {
   return (
     <SafeAreaView style={styles.safe}>
@@ -153,7 +197,7 @@ function HomeScreen({ onNewGame }) {
         <View style={styles.homeRulesBox}>
           <Text style={styles.homeRulesTitle}>HOW TO PLAY</Text>
           <Text style={styles.homeRulesText}>
-            Get closest to 31 with same-suit cards, or score 30.5 with three of a kind. 
+            Get closest to 31 with same-suit cards, or score 30.5 with three of a kind.
             Knock to end the round — just don't be lowest!
           </Text>
         </View>
@@ -162,12 +206,9 @@ function HomeScreen({ onNewGame }) {
   );
 }
 
-// PLAYER SETUP SCREEN
 function PlayerSetupScreen({ onStartGame, onExit }) {
   const [numPlayers, setNumPlayers] = useState(3);
-  const [names, setNames] = useState(
-    PLAYER_COLORS.map((_, i) => `Player ${i + 1}`)
-  );
+  const [names, setNames] = useState(PLAYER_COLORS.map((_, i) => `Player ${i + 1}`));
 
   const updateName = (idx, val) => {
     const n = [...names];
@@ -184,28 +225,19 @@ function PlayerSetupScreen({ onStartGame, onExit }) {
         </TouchableOpacity>
       </View>
       <ScrollView contentContainerStyle={styles.setupContainer}>
-
         <View style={styles.stepperRow}>
           <Text style={styles.stepperLabel}>Players</Text>
           <View style={styles.stepperControls}>
-            <TouchableOpacity
-              style={styles.stepperBtn}
-              onPress={() => setNumPlayers(Math.max(2, numPlayers - 1))}
-            >
+            <TouchableOpacity style={styles.stepperBtn} onPress={() => setNumPlayers(Math.max(2, numPlayers - 1))}>
               <Text style={styles.stepperBtnText}>−</Text>
             </TouchableOpacity>
             <Text style={styles.stepperValue}>{numPlayers}</Text>
-            <TouchableOpacity
-              style={styles.stepperBtn}
-              onPress={() => setNumPlayers(Math.min(6, numPlayers + 1))}
-            >
+            <TouchableOpacity style={styles.stepperBtn} onPress={() => setNumPlayers(Math.min(6, numPlayers + 1))}>
               <Text style={styles.stepperBtnText}>+</Text>
             </TouchableOpacity>
           </View>
         </View>
-
         <View style={styles.divider} />
-
         {Array.from({ length: numPlayers }).map((_, i) => (
           <View key={i} style={styles.playerRow}>
             <View style={[styles.colorBadge, { backgroundColor: PLAYER_COLORS[i] }]}>
@@ -220,7 +252,6 @@ function PlayerSetupScreen({ onStartGame, onExit }) {
             />
           </View>
         ))}
-
         <TouchableOpacity
           style={[styles.goldButton, { marginTop: 32 }]}
           onPress={() =>
@@ -240,15 +271,18 @@ function PlayerSetupScreen({ onStartGame, onExit }) {
   );
 }
 
-// TURN GATE SCREEN
-function TurnGateScreen({ player, onReveal, onExit }) {
+function TurnGateScreen({ player, actions, players, onReveal, onExit }) {
   return (
     <SafeAreaView style={styles.safe}>
       <View style={styles.screenTopBar}>
+        <View style={{ flex: 1 }} />
         <TouchableOpacity onPress={onExit} style={styles.exitBtn}>
           <Text style={styles.exitBtnText}>✕ EXIT</Text>
         </TouchableOpacity>
       </View>
+
+      <ActionFeed actions={actions} players={players} />
+
       <View style={styles.gateContainer}>
         <View style={styles.gateDecor}>
           <Text style={styles.gateCardSymbol}>♠</Text>
@@ -261,10 +295,7 @@ function TurnGateScreen({ player, onReveal, onExit }) {
         <Text style={styles.gateInstructions}>
           Pass the device to {player.name}, then tap to reveal your cards.
         </Text>
-        <TouchableOpacity
-          style={[styles.goldButton, { borderColor: player.color }]}
-          onPress={onReveal}
-        >
+        <TouchableOpacity style={styles.goldButton} onPress={onReveal}>
           <Text style={styles.goldButtonText}>REVEAL CARDS</Text>
         </TouchableOpacity>
       </View>
@@ -272,7 +303,6 @@ function TurnGateScreen({ player, onReveal, onExit }) {
   );
 }
 
-// GAME BOARD SCREEN
 function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickUp, onKnock, onDiscard, mustDiscard, hasKnocked, knockerName, knockRound, onExit }) {
   const score = handScore(hand);
   const [selectedCard, setSelectedCard] = useState(null);
@@ -291,7 +321,6 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
   return (
     <SafeAreaView style={styles.safe}>
       <ScrollView contentContainerStyle={styles.boardContainer}>
-        {/* Top bar with exit */}
         <View style={styles.boardTopBar}>
           <View>
             <Text style={[styles.boardPlayerName, { color: player.color }]}>{player.name}</Text>
@@ -316,9 +345,7 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
           </View>
         )}
 
-        {/* Piles */}
         <View style={styles.pilesRow}>
-          {/* Stock pile — tap to draw */}
           <View style={styles.pileArea}>
             <TouchableOpacity
               onPress={!mustDiscard ? onDraw : undefined}
@@ -327,12 +354,7 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
             >
               {stockCount > 1 && <View style={[styles.cardBase, styles.cardFaceDown, styles.stackShadow2]} />}
               {stockCount > 0 && <View style={[styles.cardBase, styles.cardFaceDown, styles.stackShadow1]} />}
-              <View style={[
-                styles.cardBase,
-                styles.cardFaceDown,
-                styles.pileTopCard,
-                !mustDiscard && styles.pileTappable,
-              ]}>
+              <View style={[styles.cardBase, styles.cardFaceDown, styles.pileTopCard, !mustDiscard && styles.pileTappable]}>
                 <Text style={{ color: GOLD, fontSize: 20 }}>♠</Text>
               </View>
             </TouchableOpacity>
@@ -340,7 +362,6 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
             {!mustDiscard && <Text style={styles.pileTapHint}>tap to draw</Text>}
           </View>
 
-          {/* Discard pile — tap to pick up */}
           <View style={styles.pileArea}>
             {topDiscard ? (
               <PlayingCard
@@ -358,7 +379,6 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
           </View>
         </View>
 
-        {/* Actions */}
         {!mustDiscard ? (
           <View style={styles.actionsRow}>
             {!knockRound && (
@@ -378,7 +398,6 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
           </View>
         )}
 
-        {/* Hand */}
         <View style={styles.handSection}>
           <Text style={styles.handLabel}>YOUR HAND</Text>
           <View style={styles.handRow}>
@@ -398,10 +417,36 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
   );
 }
 
-// ROUND SUMMARY SCREEN
+function ScatSplashScreen({ winner, hand, onContinue }) {
+  return (
+    <SafeAreaView style={styles.safe}>
+      <StatusBar barStyle="light-content" backgroundColor={BG_DARK} />
+      <View style={styles.scatContainer}>
+        <Text style={styles.scatFireworks}>🃏</Text>
+        <Text style={styles.scatTitle}>SCAT!</Text>
+        <View style={[styles.scatBadge, { borderColor: winner.color }]}>
+          <Text style={[styles.scatWinnerName, { color: winner.color }]}>{winner.name}</Text>
+        </View>
+        <Text style={styles.scatSubtitle}>hit 31!</Text>
+        <View style={styles.scatHandRow}>
+          {hand.map(card => (
+            <PlayingCard key={card.id} card={card} size="lg" />
+          ))}
+        </View>
+        <Text style={styles.scatNote}>All other players lose a life.</Text>
+        <TouchableOpacity style={styles.goldButton} onPress={onContinue}>
+          <Text style={styles.goldButtonText}>SEE RESULTS</Text>
+        </TouchableOpacity>
+      </View>
+    </SafeAreaView>
+  );
+}
+
 function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNextRound, onExit }) {
   const scores = hands.map(h => handScore(h));
-  const minScore = Math.min(...scores.filter((_, i) => players[i].lives > 0));
+  const activePlayers = players.filter(p => p.lives > 0);
+  const activeScores = scores.filter((_, i) => players[i].lives > 0);
+  const minScore = Math.min(...activeScores);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -416,12 +461,19 @@ function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNex
         {players.map((player, i) => {
           const score = scores[i];
           const isWinner = i === instantWinnerIdx;
-          const isLowest = instantWinnerIdx === null && score === minScore;
           const wasKnocker = i === knockerId;
-          const lostTwo = wasKnocker && isLowest && players.filter(p => p.lives > 0).length > 1;
-          const lostLife = instantWinnerIdx !== null
-            ? !isWinner && player.lives > 0  // scat round: everyone else lost
-            : isLowest && player.lives > 0;
+
+          let lostLives = 0;
+          if (instantWinnerIdx !== null) {
+            if (!isWinner && player.lives > 0) lostLives = 1;
+          } else {
+            const isLowest = player.lives > 0 && score === minScore;
+            if (wasKnocker && isLowest && activePlayers.length > 1) {
+              lostLives = 2;
+            } else if (isLowest) {
+              lostLives = 1;
+            }
+          }
 
           return (
             <View key={i} style={[styles.summaryCard, player.lives <= 0 && styles.eliminatedCard]}>
@@ -432,7 +484,6 @@ function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNex
                 {wasKnocker && !isWinner && <Text style={styles.knockerTag}>KNOCKED</Text>}
                 {player.lives <= 0 && <Text style={styles.eliminatedTag}>OUT</Text>}
               </View>
-
               <View style={styles.summaryHandRow}>
                 {hands[i].map(card => (
                   <PlayingCard key={card.id} card={card} size="sm" />
@@ -441,11 +492,10 @@ function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNex
                   <Text style={styles.summaryScore}>{score === 30.5 ? '30½' : score}</Text>
                 </View>
               </View>
-
               <View style={styles.summaryLifeRow}>
                 <HeartsDisplay lives={player.lives} />
-                {lostTwo && <Text style={styles.lostLifeText}>−2 lives (knocked lowest!)</Text>}
-                {lostLife && !lostTwo && <Text style={styles.lostLifeText}>−1 life</Text>}
+                {lostLives === 2 && <Text style={styles.lostLifeText}>−2 lives (knocked lowest!)</Text>}
+                {lostLives === 1 && <Text style={styles.lostLifeText}>−1 life</Text>}
               </View>
             </View>
           );
@@ -459,7 +509,6 @@ function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNex
   );
 }
 
-// GAME OVER SCREEN
 function GameOverScreen({ winner, onPlayAgain }) {
   return (
     <SafeAreaView style={styles.safe}>
@@ -479,36 +528,6 @@ function GameOverScreen({ winner, onPlayAgain }) {
   );
 }
 
-// ─── SCAT SPLASH SCREEN ──────────────────────────────────────────────────────
-function ScatSplashScreen({ winner, hand, onContinue }) {
-  return (
-    <SafeAreaView style={styles.safe}>
-      <StatusBar barStyle="light-content" backgroundColor={BG_DARK} />
-      <View style={styles.scatContainer}>
-        <Text style={styles.scatFireworks}>🃏</Text>
-        <Text style={styles.scatTitle}>SCAT!</Text>
-        <View style={[styles.scatBadge, { borderColor: winner.color }]}>
-          <Text style={[styles.scatWinnerName, { color: winner.color }]}>{winner.name}</Text>
-        </View>
-        <Text style={styles.scatSubtitle}>hit 31!</Text>
-
-        <View style={styles.scatHandRow}>
-          {hand.map(card => (
-            <PlayingCard key={card.id} card={card} size="lg" />
-          ))}
-        </View>
-
-        <Text style={styles.scatNote}>All other players lose a life.</Text>
-
-        <TouchableOpacity style={styles.goldButton} onPress={onContinue}>
-          <Text style={styles.goldButtonText}>SEE RESULTS</Text>
-        </TouchableOpacity>
-      </View>
-    </SafeAreaView>
-  );
-}
-
-// ─── EXIT CONFIRMATION MODAL ─────────────────────────────────────────────────
 function ExitConfirmModal({ visible, onConfirm, onCancel }) {
   return (
     <Modal transparent visible={visible} animationType="fade" onRequestClose={onCancel}>
@@ -534,7 +553,7 @@ function ExitConfirmModal({ visible, onConfirm, onCancel }) {
 
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
-  const [screen, setScreen] = useState('home'); // home | setup | gate | board | summary | gameover
+  const [screen, setScreen] = useState('home');
   const [showExitModal, setShowExitModal] = useState(false);
   const [players, setPlayers] = useState([]);
   const [dealerIdx, setDealerIdx] = useState(0);
@@ -543,40 +562,38 @@ export default function App() {
   const [deck, setDeck] = useState([]);
   const [discardPile, setDiscardPile] = useState([]);
   const [knockerId, setKnockerId] = useState(null);
-  const [knockRound, setKnockRound] = useState(false); // others taking last turn
+  const [knockRound, setKnockRound] = useState(false);
   const [knockTurnsLeft, setKnockTurnsLeft] = useState(0);
   const [mustDiscard, setMustDiscard] = useState(false);
   const [roundOver, setRoundOver] = useState(false);
   const [instantWinnerIdx, setInstantWinnerIdx] = useState(null);
   const [finalHands, setFinalHands] = useState([]);
-  const [playersSnapshot, setPlayersSnapshot] = useState([]);
 
-  // ── Back button handling
+  // ── Action history state
+  // actionLog: flat array of { playerIdx, type, card? } for the whole round
+  // watermarks: actionLog index per player — they see log[watermark[i]..] when their turn arrives
+  const [actionLog, setActionLog] = useState([]);
+  const [watermarks, setWatermarks] = useState([]);
+
   useEffect(() => {
     const sub = BackHandler.addEventListener('hardwareBackPress', () => {
-      if (screen === 'home') return false; // let OS handle (exit app)
+      if (screen === 'home') return false;
       setShowExitModal(true);
-      return true; // consume the event
+      return true;
     });
     return () => sub.remove();
   }, [screen]);
 
-  // ── Start new game
   const handleStartGame = useCallback((setupPlayers) => {
     setPlayers(setupPlayers);
     setDealerIdx(0);
     startRound(setupPlayers, 0);
   }, []);
 
-  // ── Start a round
   const startRound = (currentPlayers, dealer) => {
-    const activePlayers = currentPlayers.filter(p => p.lives > 0);
-    if (activePlayers.length < 2) return; // should not happen here
-
     const newDeck = buildDeck();
     const newHands = currentPlayers.map(() => []);
 
-    // Deal 3 cards each (only to active)
     let di = 0;
     for (let round = 0; round < 3; round++) {
       for (let i = 0; i < currentPlayers.length; i++) {
@@ -599,22 +616,35 @@ export default function App() {
     setRoundOver(false);
     setInstantWinnerIdx(null);
     setFinalHands([]);
-    setPlayersSnapshot([]);
 
-    // First turn = player after dealer
+    // Reset action log — empty log, watermarks all at 0 (see everything from start)
+    setActionLog([]);
+    setWatermarks(currentPlayers.map(() => 0));
+
     const firstIdx = nextActiveIdx(currentPlayers, dealer);
     setCurrentPlayerIdx(firstIdx);
     setScreen('gate');
   };
 
-  // ── Helpers
   const nextActiveIdx = (plist, from) => {
     let idx = (from + 1) % plist.length;
     while (plist[idx].lives <= 0) idx = (idx + 1) % plist.length;
     return idx;
   };
 
-  const activePlayers = players.filter(p => p.lives > 0);
+  // Append an action to the log and return the new log immediately
+  // (so callers don't have to wait for setState to resolve)
+  const appendAction = (currentLog, playerIdx, type, card = null) => {
+    return [...currentLog, { playerIdx, type, card }];
+  };
+
+  // Stamp a watermark for playerIdx at the end of the current log,
+  // so next time it's their turn they only see actions logged after this moment.
+  const stampWatermark = (playerIdx, logLength, currentWatermarks) => {
+    const updated = [...currentWatermarks];
+    updated[playerIdx] = logLength;
+    return updated;
+  };
 
   // ── Draw from stock
   const handleDraw = () => {
@@ -625,14 +655,18 @@ export default function App() {
     );
     setDeck(rest);
     setHands(newHands);
+
+    const newLog = appendAction(actionLog, currentPlayerIdx, 'draw_stock');
+    setActionLog(newLog);
+
     if (handScore(newHands[currentPlayerIdx]) === 31) {
-      endRound(newHands, currentPlayerIdx);
+      endRound(newHands, currentPlayerIdx, newLog);
     } else {
       setMustDiscard(true);
     }
   };
 
-  // ── Pick up discard
+  // ── Pick up from discard pile
   const handlePickUp = () => {
     if (discardPile.length === 0) return;
     const top = discardPile[discardPile.length - 1];
@@ -642,96 +676,101 @@ export default function App() {
     );
     setDiscardPile(newDiscard);
     setHands(newHands);
+
+    const newLog = appendAction(actionLog, currentPlayerIdx, 'pickup_discard', top);
+    setActionLog(newLog);
+
     if (handScore(newHands[currentPlayerIdx]) === 31) {
-      endRound(newHands, currentPlayerIdx);
+      endRound(newHands, currentPlayerIdx, newLog);
     } else {
       setMustDiscard(true);
     }
   };
 
-  // ── Discard a card
+  // ── Discard a card from hand
   const handleDiscard = (cardIdx) => {
+    const discarded = hands[currentPlayerIdx][cardIdx];
     const newHands = hands.map((h, i) => {
       if (i !== currentPlayerIdx) return h;
       return h.filter((_, ci) => ci !== cardIdx);
     });
     setHands(newHands);
     setMustDiscard(false);
-    const discarded = hands[currentPlayerIdx][cardIdx];
     setDiscardPile([...discardPile, discarded]);
 
+    const newLog = appendAction(actionLog, currentPlayerIdx, 'discard', discarded);
+    setActionLog(newLog);
+
     if (roundOver) {
-      triggerSummary(newHands, instantWinnerIdx);
+      triggerSummary(newHands, instantWinnerIdx, newLog);
       return;
     }
 
     if (knockRound) {
       const remaining = knockTurnsLeft - 1;
       if (remaining <= 0) {
-        triggerSummary(newHands);
+        triggerSummary(newHands, null, newLog);
       } else {
         setKnockTurnsLeft(remaining);
-        advanceTurn(newHands, remaining > 0);
+        advanceTurn(currentPlayerIdx, newLog);
       }
     } else {
-      advanceTurn(newHands, true);
+      advanceTurn(currentPlayerIdx, newLog);
     }
   };
 
   // ── Knock
   const handleKnock = () => {
+    const newLog = appendAction(actionLog, currentPlayerIdx, 'knock');
+    setActionLog(newLog);
     setKnockerId(currentPlayerIdx);
-    // Count remaining active players (excluding knocker)
     const othersCount = players.filter((p, i) => p.lives > 0 && i !== currentPlayerIdx).length;
     setKnockRound(true);
     setKnockTurnsLeft(othersCount);
-    advanceTurn(hands, true, true);
+    advanceTurn(currentPlayerIdx, newLog);
   };
 
-  const advanceTurn = (currentHands, stillGoing, justKnocked = false) => {
-    if (!stillGoing) {
-      triggerSummary(currentHands);
-      return;
-    }
-    const nextIdx = nextActiveIdx(players, currentPlayerIdx);
+  // Stamp this player's watermark at end of log, then move to next player
+  const advanceTurn = (finishedPlayerIdx, currentLog) => {
+    const newWatermarks = stampWatermark(finishedPlayerIdx, currentLog.length, watermarks);
+    setWatermarks(newWatermarks);
+
+    const nextIdx = nextActiveIdx(players, finishedPlayerIdx);
     setCurrentPlayerIdx(nextIdx);
     setScreen('gate');
   };
 
-  const endRound = (currentHands, winnerIdx) => {
+  const endRound = (currentHands, winnerIdx, currentLog) => {
     setRoundOver(true);
     setInstantWinnerIdx(winnerIdx ?? null);
     setFinalHands(currentHands);
-    setPlayersSnapshot([...players]);
+    setActionLog(currentLog);
     setScreen('scat');
   };
 
-  const triggerSummary = (finalHandsArg, winnerIdx = null, currentPlayers = null) => {
-    const playersSnap = currentPlayers || players;
-    const activeSnap = playersSnap.filter(p => p.lives > 0);
+  const triggerSummary = (finalHandsArg, winnerIdx = null) => {
+    const activePlayers = players.filter(p => p.lives > 0);
     let updatedPlayers;
 
     if (winnerIdx !== null) {
-      // Instant 31 win — every OTHER active player loses 1 life
-      updatedPlayers = playersSnap.map((p, i) => {
-        if (p.lives <= 0) return p;
-        if (i === winnerIdx) return p;
+      // Scat: every other active player loses 1 life
+      updatedPlayers = players.map((p, i) => {
+        if (p.lives <= 0 || i === winnerIdx) return p;
         return { ...p, lives: Math.max(0, p.lives - 1) };
       });
     } else {
-      // Normal round end — find the lowest score among active players
+      // Normal: lowest score loses (or knocker loses 2 if they had the lowest)
       const scores = finalHandsArg.map((h, i) =>
-        playersSnap[i].lives > 0 ? handScore(h) : Infinity
+        players[i].lives > 0 ? handScore(h) : Infinity
       );
-      const activeScores = scores.filter(s => s !== Infinity);
-      const minScore = Math.min(...activeScores);
+      const minScore = Math.min(...scores.filter(s => s !== Infinity));
       const knocker = knockerId;
 
-      updatedPlayers = playersSnap.map((p, i) => {
+      updatedPlayers = players.map((p, i) => {
         if (p.lives <= 0) return p;
         const isLowest = scores[i] === minScore;
         const wasKnocker = i === knocker;
-        const lostTwo = wasKnocker && isLowest && activeSnap.length > 1;
+        const lostTwo = wasKnocker && isLowest && activePlayers.length > 1;
         const lostOne = isLowest && !lostTwo;
         let newLives = p.lives;
         if (lostTwo) newLives = Math.max(0, newLives - 2);
@@ -744,7 +783,6 @@ export default function App() {
     setScreen('summary');
   };
 
-  // ── Next round / game over check
   const handleNextRound = () => {
     const stillAlive = players.filter(p => p.lives > 0);
     if (stillAlive.length === 1) {
@@ -756,16 +794,20 @@ export default function App() {
     startRound(players, newDealer);
   };
 
-  // ── Exit to home
   const handleExitToHome = () => {
     setShowExitModal(false);
     setScreen('home');
     setPlayers([]);
   };
 
-  // ─── RENDER ──────────────────────────────────────────────────────────────
-  const inGame = ['gate', 'board', 'scat', 'summary'].includes(screen);
+  // Build the action feed for the upcoming player at the gate screen:
+  // everything logged after their watermark, minus their own stock draws
+  const buildFeedFor = (playerIdx) => {
+    const watermark = watermarks[playerIdx] ?? 0;
+    return getActionsForPlayer(actionLog, watermark, playerIdx);
+  };
 
+  // ─── RENDER ──────────────────────────────────────────────────────────────
   if (screen === 'home') {
     return <HomeScreen onNewGame={() => setScreen('setup')} />;
   }
@@ -774,28 +816,23 @@ export default function App() {
     return (
       <>
         <PlayerSetupScreen onStartGame={handleStartGame} onExit={() => setShowExitModal(true)} />
-        <ExitConfirmModal
-          visible={showExitModal}
-          onConfirm={handleExitToHome}
-          onCancel={() => setShowExitModal(false)}
-        />
+        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
       </>
     );
   }
 
   if (screen === 'gate') {
+    const feedActions = buildFeedFor(currentPlayerIdx);
     return (
       <>
         <TurnGateScreen
           player={players[currentPlayerIdx]}
+          actions={feedActions}
+          players={players}
           onReveal={() => setScreen('board')}
           onExit={() => setShowExitModal(true)}
         />
-        <ExitConfirmModal
-          visible={showExitModal}
-          onConfirm={handleExitToHome}
-          onCancel={() => setShowExitModal(false)}
-        />
+        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
       </>
     );
   }
@@ -819,11 +856,7 @@ export default function App() {
           knockRound={knockRound}
           onExit={() => setShowExitModal(true)}
         />
-        <ExitConfirmModal
-          visible={showExitModal}
-          onConfirm={handleExitToHome}
-          onCancel={() => setShowExitModal(false)}
-        />
+        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
       </>
     );
   }
@@ -832,15 +865,11 @@ export default function App() {
     return (
       <>
         <ScatSplashScreen
-          winner={playersSnapshot[instantWinnerIdx] || players[instantWinnerIdx]}
+          winner={players[instantWinnerIdx]}
           hand={finalHands[instantWinnerIdx] || []}
-          onContinue={() => triggerSummary(finalHands, instantWinnerIdx, playersSnapshot)}
+          onContinue={() => triggerSummary(finalHands, instantWinnerIdx)}
         />
-        <ExitConfirmModal
-          visible={showExitModal}
-          onConfirm={handleExitToHome}
-          onCancel={() => setShowExitModal(false)}
-        />
+        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
       </>
     );
   }
@@ -857,11 +886,7 @@ export default function App() {
           onNextRound={handleNextRound}
           onExit={() => setShowExitModal(true)}
         />
-        <ExitConfirmModal
-          visible={showExitModal}
-          onConfirm={handleExitToHome}
-          onCancel={() => setShowExitModal(false)}
-        />
+        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
       </>
     );
   }
@@ -882,7 +907,6 @@ const styles = StyleSheet.create({
     paddingTop: STATUSBAR_HEIGHT,
   },
 
-  // ── EXIT BUTTON & TOP BAR ──
   screenTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -905,6 +929,47 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     letterSpacing: 1,
     fontFamily: 'Georgia',
+  },
+
+  // ── ACTION FEED ──
+  feedContainer: {
+    marginHorizontal: 16,
+    marginBottom: 4,
+    backgroundColor: BG_SURFACE,
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: '#333',
+    padding: 14,
+  },
+  feedTitle: {
+    color: TEXT_MUTED,
+    fontSize: 9,
+    letterSpacing: 3,
+    fontFamily: 'Georgia',
+    marginBottom: 10,
+    textTransform: 'uppercase',
+  },
+  feedRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 7,
+    gap: 10,
+  },
+  feedDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    flexShrink: 0,
+  },
+  feedText: {
+    color: TEXT_PRIMARY,
+    fontSize: 13,
+    fontFamily: 'Georgia',
+    flex: 1,
+  },
+  feedTextKnock: {
+    color: '#FF8C00',
+    fontWeight: '700',
   },
 
   // ── MODAL ──
@@ -1045,20 +1110,10 @@ const styles = StyleSheet.create({
   },
 
   // ── HEARTS ──
-  heartsRow: {
-    flexDirection: 'row',
-    gap: 2,
-    marginTop: 4,
-  },
-  heart: {
-    fontSize: 16,
-  },
-  heartFull: {
-    color: '#EF4444',
-  },
-  heartEmpty: {
-    color: '#444',
-  },
+  heartsRow: { flexDirection: 'row', gap: 2, marginTop: 4 },
+  heart: { fontSize: 16 },
+  heartFull: { color: '#EF4444' },
+  heartEmpty: { color: '#444' },
 
   // ── SHARED ──
   goldButton: {
@@ -1101,10 +1156,7 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     padding: 24,
   },
-  homeLogoArea: {
-    alignItems: 'center',
-    marginBottom: 24,
-  },
+  homeLogoArea: { alignItems: 'center', marginBottom: 24 },
   aceSpadesCard: {
     width: 90,
     height: 120,
@@ -1121,47 +1173,12 @@ const styles = StyleSheet.create({
     shadowRadius: 16,
     elevation: 10,
   },
-  aceSpadesSuit: {
-    fontSize: 40,
-    color: '#F5F0E8',
-    fontFamily: 'Georgia',
-  },
-  aceSpadesNum: {
-    fontSize: 22,
-    color: GOLD,
-    fontWeight: '800',
-    fontFamily: 'Georgia',
-    letterSpacing: 2,
-  },
-  homeTitle: {
-    fontSize: 52,
-    fontWeight: '800',
-    color: TEXT_PRIMARY,
-    letterSpacing: 12,
-    fontFamily: 'Georgia',
-  },
-  homeSubtitle: {
-    fontSize: 14,
-    color: GOLD,
-    letterSpacing: 6,
-    fontFamily: 'Georgia',
-    marginTop: 4,
-  },
-  homeDecorLine: {
-    width: 120,
-    height: 2,
-    backgroundColor: GOLD,
-    marginVertical: 20,
-    opacity: 0.7,
-  },
-  homeTagline: {
-    color: TEXT_MUTED,
-    fontSize: 13,
-    letterSpacing: 2,
-    marginBottom: 40,
-    fontFamily: 'Georgia',
-    fontStyle: 'italic',
-  },
+  aceSpadesSuit: { fontSize: 40, color: '#F5F0E8', fontFamily: 'Georgia' },
+  aceSpadesNum: { fontSize: 22, color: GOLD, fontWeight: '800', fontFamily: 'Georgia', letterSpacing: 2 },
+  homeTitle: { fontSize: 52, fontWeight: '800', color: TEXT_PRIMARY, letterSpacing: 12, fontFamily: 'Georgia' },
+  homeSubtitle: { fontSize: 14, color: GOLD, letterSpacing: 6, fontFamily: 'Georgia', marginTop: 4 },
+  homeDecorLine: { width: 120, height: 2, backgroundColor: GOLD, marginVertical: 20, opacity: 0.7 },
+  homeTagline: { color: TEXT_MUTED, fontSize: 13, letterSpacing: 2, marginBottom: 40, fontFamily: 'Georgia', fontStyle: 'italic' },
   homeRulesBox: {
     marginTop: 40,
     padding: 20,
@@ -1171,26 +1188,11 @@ const styles = StyleSheet.create({
     borderColor: '#333',
     width: '100%',
   },
-  homeRulesTitle: {
-    color: GOLD,
-    fontSize: 11,
-    letterSpacing: 3,
-    fontWeight: '700',
-    marginBottom: 8,
-    fontFamily: 'Georgia',
-  },
-  homeRulesText: {
-    color: TEXT_MUTED,
-    fontSize: 13,
-    lineHeight: 20,
-    fontFamily: 'Georgia',
-  },
+  homeRulesTitle: { color: GOLD, fontSize: 11, letterSpacing: 3, fontWeight: '700', marginBottom: 8, fontFamily: 'Georgia' },
+  homeRulesText: { color: TEXT_MUTED, fontSize: 13, lineHeight: 20, fontFamily: 'Georgia' },
 
   // ── SETUP ──
-  setupContainer: {
-    padding: 24,
-    paddingTop: 16,
-  },
+  setupContainer: { padding: 24, paddingTop: 16 },
   stepperRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -1201,58 +1203,14 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333',
   },
-  stepperLabel: {
-    color: TEXT_PRIMARY,
-    fontSize: 16,
-    fontWeight: '600',
-    fontFamily: 'Georgia',
-  },
-  stepperControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 16,
-  },
-  stepperBtn: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: GOLD,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stepperBtnText: {
-    color: '#0F0F0F',
-    fontSize: 20,
-    fontWeight: '800',
-    lineHeight: 24,
-  },
-  stepperValue: {
-    color: GOLD,
-    fontSize: 24,
-    fontWeight: '800',
-    fontFamily: 'Georgia',
-    minWidth: 28,
-    textAlign: 'center',
-  },
-  playerRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 12,
-  },
-  colorBadge: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  colorBadgeText: {
-    color: '#0F0F0F',
-    fontWeight: '800',
-    fontSize: 16,
-    fontFamily: 'Georgia',
-  },
+  stepperLabel: { color: TEXT_PRIMARY, fontSize: 16, fontWeight: '600', fontFamily: 'Georgia' },
+  stepperControls: { flexDirection: 'row', alignItems: 'center', gap: 16 },
+  stepperBtn: { width: 36, height: 36, borderRadius: 18, backgroundColor: GOLD, alignItems: 'center', justifyContent: 'center' },
+  stepperBtnText: { color: '#0F0F0F', fontSize: 20, fontWeight: '800', lineHeight: 24 },
+  stepperValue: { color: GOLD, fontSize: 24, fontWeight: '800', fontFamily: 'Georgia', minWidth: 28, textAlign: 'center' },
+  playerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 12 },
+  colorBadge: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  colorBadgeText: { color: '#0F0F0F', fontWeight: '800', fontSize: 16, fontFamily: 'Georgia' },
   nameInput: {
     flex: 1,
     backgroundColor: BG_SURFACE,
@@ -1266,12 +1224,7 @@ const styles = StyleSheet.create({
   },
 
   // ── GATE ──
-  gateContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-  },
+  gateContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
   gateDecor: {
     width: 80,
     height: 80,
@@ -1283,31 +1236,10 @@ const styles = StyleSheet.create({
     justifyContent: 'center',
     marginBottom: 32,
   },
-  gateCardSymbol: {
-    fontSize: 36,
-    color: GOLD,
-    fontFamily: 'Georgia',
-  },
-  gateLabel: {
-    color: TEXT_MUTED,
-    fontSize: 11,
-    letterSpacing: 4,
-    marginBottom: 16,
-    fontFamily: 'Georgia',
-  },
-  gateBadge: {
-    borderWidth: 2,
-    borderRadius: 16,
-    paddingVertical: 12,
-    paddingHorizontal: 32,
-    marginBottom: 16,
-  },
-  gatePlayerName: {
-    fontSize: 32,
-    fontWeight: '800',
-    fontFamily: 'Georgia',
-    letterSpacing: 2,
-  },
+  gateCardSymbol: { fontSize: 36, color: GOLD, fontFamily: 'Georgia' },
+  gateLabel: { color: TEXT_MUTED, fontSize: 11, letterSpacing: 4, marginBottom: 16, fontFamily: 'Georgia' },
+  gateBadge: { borderWidth: 2, borderRadius: 16, paddingVertical: 12, paddingHorizontal: 32, marginBottom: 16 },
+  gatePlayerName: { fontSize: 32, fontWeight: '800', fontFamily: 'Georgia', letterSpacing: 2 },
   gateInstructions: {
     color: TEXT_MUTED,
     fontSize: 14,
@@ -1319,11 +1251,7 @@ const styles = StyleSheet.create({
   },
 
   // ── BOARD ──
-  boardContainer: {
-    padding: 16,
-    paddingTop: 16,
-    paddingBottom: 32,
-  },
+  boardContainer: { padding: 16, paddingTop: 16, paddingBottom: 32 },
   boardTopBar: {
     flexDirection: 'row',
     justifyContent: 'space-between',
@@ -1335,16 +1263,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333',
   },
-  boardRightCluster: {
-    alignItems: 'flex-end',
-    gap: 8,
-  },
-  boardPlayerName: {
-    fontSize: 20,
-    fontWeight: '800',
-    fontFamily: 'Georgia',
-    letterSpacing: 1,
-  },
+  boardRightCluster: { alignItems: 'flex-end', gap: 8 },
+  boardPlayerName: { fontSize: 20, fontWeight: '800', fontFamily: 'Georgia', letterSpacing: 1 },
   boardScoreBadge: {
     alignItems: 'center',
     backgroundColor: BG_CARD,
@@ -1354,18 +1274,8 @@ const styles = StyleSheet.create({
     borderColor: GOLD,
     minWidth: 64,
   },
-  boardScoreLabel: {
-    color: TEXT_MUTED,
-    fontSize: 9,
-    letterSpacing: 2,
-    fontFamily: 'Georgia',
-  },
-  boardScoreValue: {
-    color: GOLD,
-    fontSize: 22,
-    fontWeight: '800',
-    fontFamily: 'Georgia',
-  },
+  boardScoreLabel: { color: TEXT_MUTED, fontSize: 9, letterSpacing: 2, fontFamily: 'Georgia' },
+  boardScoreValue: { color: GOLD, fontSize: 22, fontWeight: '800', fontFamily: 'Georgia' },
   knockBanner: {
     backgroundColor: '#2A1A00',
     borderWidth: 1,
@@ -1375,12 +1285,7 @@ const styles = StyleSheet.create({
     marginBottom: 16,
     alignItems: 'center',
   },
-  knockBannerText: {
-    color: GOLD_LIGHT,
-    fontSize: 13,
-    fontFamily: 'Georgia',
-    letterSpacing: 1,
-  },
+  knockBannerText: { color: GOLD_LIGHT, fontSize: 13, fontFamily: 'Georgia', letterSpacing: 1 },
   pilesRow: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -1392,335 +1297,58 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333',
   },
-  pileArea: {
-    alignItems: 'center',
-    gap: 8,
-  },
-  stackedCardWrapper: {
-    width: 64,
-    height: 90,
-    position: 'relative',
-  },
-  pileTopCard: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    width: 64,
-    height: 90,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  stackShadow1: {
-    position: 'absolute',
-    top: -3,
-    left: -3,
-    width: 64,
-    height: 90,
-    opacity: 0.7,
-  },
-  stackShadow2: {
-    position: 'absolute',
-    top: -6,
-    left: -6,
-    width: 64,
-    height: 90,
-    opacity: 0.4,
-  },
-  emptyPile: {
-    width: 64,
-    height: 90,
-    backgroundColor: '#1A1A1A',
-    borderStyle: 'dashed',
-    borderColor: '#444',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  emptyPileText: {
-    color: '#444',
-    fontSize: 8,
-    letterSpacing: 1,
-  },
-  pileLabel: {
-    color: TEXT_MUTED,
-    fontSize: 10,
-    letterSpacing: 2,
-    fontFamily: 'Georgia',
-  },
-  pileTappable: {
-    shadowColor: GOLD,
-    shadowOffset: { width: 0, height: 0 },
-    shadowOpacity: 0.5,
-    shadowRadius: 8,
-    elevation: 8,
-  },
-  pileTapHint: {
-    color: GOLD,
-    fontSize: 9,
-    letterSpacing: 1,
-    fontFamily: 'Georgia',
-    opacity: 0.7,
-    marginTop: -2,
-  },
-  actionsRow: {
-    flexDirection: 'row',
-    gap: 8,
-    marginBottom: 24,
-  },
-  actionBtn: {
-    flex: 1,
-    backgroundColor: BG_SURFACE,
-    borderRadius: 10,
-    paddingVertical: 14,
-    alignItems: 'center',
-    borderWidth: 1,
-    borderColor: GOLD,
-  },
-  actionBtnDisabled: {
-    borderColor: '#333',
-    opacity: 0.4,
-  },
-  actionBtnText: {
-    color: GOLD,
-    fontWeight: '700',
-    fontSize: 13,
-    letterSpacing: 2,
-    fontFamily: 'Georgia',
-  },
-  knockBtn: {
-    backgroundColor: '#2A1400',
-    borderColor: '#FF8C00',
-  },
-  knockBtnText: {
-    color: '#FF8C00',
-    fontWeight: '800',
-    fontSize: 13,
-    letterSpacing: 2,
-    fontFamily: 'Georgia',
-  },
-  discardInstruction: {
-    alignItems: 'center',
-    marginBottom: 24,
-    gap: 12,
-  },
-  discardInstructionText: {
-    color: GOLD_LIGHT,
-    fontSize: 14,
-    fontFamily: 'Georgia',
-    fontStyle: 'italic',
-  },
-  handSection: {
-    backgroundColor: BG_SURFACE,
-    borderRadius: 16,
-    padding: 20,
-    borderWidth: 1,
-    borderColor: GOLD,
-    alignItems: 'center',
-  },
-  handLabel: {
-    color: TEXT_MUTED,
-    fontSize: 10,
-    letterSpacing: 3,
-    marginBottom: 16,
-    fontFamily: 'Georgia',
-  },
-  handRow: {
-    flexDirection: 'row',
-    gap: 12,
-    justifyContent: 'center',
-  },
+  pileArea: { alignItems: 'center', gap: 8 },
+  stackedCardWrapper: { width: 64, height: 90, position: 'relative' },
+  pileTopCard: { position: 'absolute', top: 0, left: 0, width: 64, height: 90, alignItems: 'center', justifyContent: 'center' },
+  stackShadow1: { position: 'absolute', top: -3, left: -3, width: 64, height: 90, opacity: 0.7 },
+  stackShadow2: { position: 'absolute', top: -6, left: -6, width: 64, height: 90, opacity: 0.4 },
+  emptyPile: { width: 64, height: 90, backgroundColor: '#1A1A1A', borderStyle: 'dashed', borderColor: '#444', alignItems: 'center', justifyContent: 'center' },
+  emptyPileText: { color: '#444', fontSize: 8, letterSpacing: 1 },
+  pileLabel: { color: TEXT_MUTED, fontSize: 10, letterSpacing: 2, fontFamily: 'Georgia' },
+  pileTappable: { shadowColor: GOLD, shadowOffset: { width: 0, height: 0 }, shadowOpacity: 0.5, shadowRadius: 8, elevation: 8 },
+  pileTapHint: { color: GOLD, fontSize: 9, letterSpacing: 1, fontFamily: 'Georgia', opacity: 0.7, marginTop: -2 },
+  actionsRow: { flexDirection: 'row', gap: 8, marginBottom: 24 },
+  actionBtn: { flex: 1, backgroundColor: BG_SURFACE, borderRadius: 10, paddingVertical: 14, alignItems: 'center', borderWidth: 1, borderColor: GOLD },
+  actionBtnText: { color: GOLD, fontWeight: '700', fontSize: 13, letterSpacing: 2, fontFamily: 'Georgia' },
+  knockBtn: { backgroundColor: '#2A1400', borderColor: '#FF8C00' },
+  knockBtnText: { color: '#FF8C00', fontWeight: '800', fontSize: 13, letterSpacing: 2, fontFamily: 'Georgia' },
+  discardInstruction: { alignItems: 'center', marginBottom: 24, gap: 12 },
+  discardInstructionText: { color: GOLD_LIGHT, fontSize: 14, fontFamily: 'Georgia', fontStyle: 'italic' },
+  handSection: { backgroundColor: BG_SURFACE, borderRadius: 16, padding: 20, borderWidth: 1, borderColor: GOLD, alignItems: 'center' },
+  handLabel: { color: TEXT_MUTED, fontSize: 10, letterSpacing: 3, marginBottom: 16, fontFamily: 'Georgia' },
+  handRow: { flexDirection: 'row', gap: 12, justifyContent: 'center' },
 
   // ── SUMMARY ──
-  summaryContainer: {
-    padding: 20,
-    paddingTop: 16,
-    paddingBottom: 40,
-  },
-  summaryCard: {
-    backgroundColor: BG_SURFACE,
-    borderRadius: 12,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#333',
-  },
-  eliminatedCard: {
-    opacity: 0.45,
-  },
-  summaryCardHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 12,
-    gap: 8,
-  },
-  colorDot: {
-    width: 12,
-    height: 12,
-    borderRadius: 6,
-  },
-  summaryPlayerName: {
-    fontSize: 18,
-    fontWeight: '700',
-    fontFamily: 'Georgia',
-    flex: 1,
-  },
-  scatTag: {
-    backgroundColor: '#1A2A00',
-    color: GOLD,
-    fontSize: 10,
-    fontWeight: '800',
-    letterSpacing: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    fontFamily: 'Georgia',
-    borderWidth: 1,
-    borderColor: GOLD,
-  },
-  knockerTag: {
-    backgroundColor: '#2A1400',
-    color: '#FF8C00',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    fontFamily: 'Georgia',
-  },
-  eliminatedTag: {
-    backgroundColor: '#2A0000',
-    color: '#EF4444',
-    fontSize: 10,
-    fontWeight: '700',
-    letterSpacing: 1,
-    borderRadius: 6,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    fontFamily: 'Georgia',
-  },
-  summaryHandRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    marginBottom: 10,
-  },
-  summaryScoreBadge: {
-    backgroundColor: BG_CARD,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: GOLD,
-    paddingHorizontal: 12,
-    paddingVertical: 6,
-    marginLeft: 8,
-  },
-  summaryScore: {
-    color: GOLD,
-    fontSize: 18,
-    fontWeight: '800',
-    fontFamily: 'Georgia',
-  },
-  summaryLifeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-  },
-  lostLifeText: {
-    color: '#EF4444',
-    fontSize: 12,
-    fontFamily: 'Georgia',
-    fontStyle: 'italic',
-  },
+  summaryContainer: { padding: 20, paddingTop: 16, paddingBottom: 40 },
+  summaryCard: { backgroundColor: BG_SURFACE, borderRadius: 12, padding: 16, marginBottom: 12, borderWidth: 1, borderColor: '#333' },
+  eliminatedCard: { opacity: 0.45 },
+  summaryCardHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 8 },
+  colorDot: { width: 12, height: 12, borderRadius: 6 },
+  summaryPlayerName: { fontSize: 18, fontWeight: '700', fontFamily: 'Georgia', flex: 1 },
+  scatTag: { backgroundColor: '#1A2A00', color: GOLD, fontSize: 10, fontWeight: '800', letterSpacing: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, fontFamily: 'Georgia', borderWidth: 1, borderColor: GOLD },
+  knockerTag: { backgroundColor: '#2A1400', color: '#FF8C00', fontSize: 10, fontWeight: '700', letterSpacing: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, fontFamily: 'Georgia' },
+  eliminatedTag: { backgroundColor: '#2A0000', color: '#EF4444', fontSize: 10, fontWeight: '700', letterSpacing: 1, borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3, fontFamily: 'Georgia' },
+  summaryHandRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 10 },
+  summaryScoreBadge: { backgroundColor: BG_CARD, borderRadius: 8, borderWidth: 1, borderColor: GOLD, paddingHorizontal: 12, paddingVertical: 6, marginLeft: 8 },
+  summaryScore: { color: GOLD, fontSize: 18, fontWeight: '800', fontFamily: 'Georgia' },
+  summaryLifeRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
+  lostLifeText: { color: '#EF4444', fontSize: 12, fontFamily: 'Georgia', fontStyle: 'italic' },
 
   // ── SCAT SPLASH ──
-  scatContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-    gap: 16,
-  },
-  scatFireworks: {
-    fontSize: 64,
-    marginBottom: 8,
-  },
-  scatTitle: {
-    fontSize: 72,
-    fontWeight: '800',
-    color: GOLD,
-    letterSpacing: 12,
-    fontFamily: 'Georgia',
-    textShadowColor: GOLD,
-    textShadowOffset: { width: 0, height: 0 },
-    textShadowRadius: 20,
-  },
-  scatBadge: {
-    borderWidth: 2,
-    borderRadius: 16,
-    paddingVertical: 10,
-    paddingHorizontal: 28,
-  },
-  scatWinnerName: {
-    fontSize: 28,
-    fontWeight: '800',
-    fontFamily: 'Georgia',
-    letterSpacing: 2,
-  },
-  scatSubtitle: {
-    color: TEXT_MUTED,
-    fontSize: 16,
-    fontFamily: 'Georgia',
-    fontStyle: 'italic',
-    marginTop: -8,
-  },
-  scatHandRow: {
-    flexDirection: 'row',
-    gap: 12,
-    marginVertical: 16,
-  },
-  scatNote: {
-    color: '#EF4444',
-    fontSize: 14,
-    fontFamily: 'Georgia',
-    fontStyle: 'italic',
-    marginBottom: 8,
-  },
+  scatContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 16 },
+  scatFireworks: { fontSize: 64, marginBottom: 8 },
+  scatTitle: { fontSize: 72, fontWeight: '800', color: GOLD, letterSpacing: 12, fontFamily: 'Georgia', textShadowColor: GOLD, textShadowOffset: { width: 0, height: 0 }, textShadowRadius: 20 },
+  scatBadge: { borderWidth: 2, borderRadius: 16, paddingVertical: 10, paddingHorizontal: 28 },
+  scatWinnerName: { fontSize: 28, fontWeight: '800', fontFamily: 'Georgia', letterSpacing: 2 },
+  scatSubtitle: { color: TEXT_MUTED, fontSize: 16, fontFamily: 'Georgia', fontStyle: 'italic', marginTop: -8 },
+  scatHandRow: { flexDirection: 'row', gap: 12, marginVertical: 16 },
+  scatNote: { color: '#EF4444', fontSize: 14, fontFamily: 'Georgia', fontStyle: 'italic', marginBottom: 8 },
 
   // ── GAME OVER ──
-  gameOverContainer: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 32,
-  },
-  gameOverEmoji: {
-    fontSize: 72,
-    marginBottom: 16,
-  },
-  gameOverLabel: {
-    color: TEXT_MUTED,
-    fontSize: 12,
-    letterSpacing: 6,
-    marginBottom: 16,
-    fontFamily: 'Georgia',
-  },
-  gameOverBadge: {
-    borderWidth: 2,
-    borderRadius: 20,
-    paddingVertical: 16,
-    paddingHorizontal: 40,
-    marginBottom: 16,
-  },
-  gameOverName: {
-    fontSize: 36,
-    fontWeight: '800',
-    fontFamily: 'Georgia',
-    letterSpacing: 2,
-  },
-  gameOverSub: {
-    color: TEXT_MUTED,
-    fontSize: 14,
-    fontFamily: 'Georgia',
-    fontStyle: 'italic',
-    marginBottom: 12,
-  },
+  gameOverContainer: { flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32 },
+  gameOverEmoji: { fontSize: 72, marginBottom: 16 },
+  gameOverLabel: { color: TEXT_MUTED, fontSize: 12, letterSpacing: 6, marginBottom: 16, fontFamily: 'Georgia' },
+  gameOverBadge: { borderWidth: 2, borderRadius: 20, paddingVertical: 16, paddingHorizontal: 40, marginBottom: 16 },
+  gameOverName: { fontSize: 36, fontWeight: '800', fontFamily: 'Georgia', letterSpacing: 2 },
+  gameOverSub: { color: TEXT_MUTED, fontSize: 14, fontFamily: 'Georgia', fontStyle: 'italic', marginBottom: 12 },
 });
