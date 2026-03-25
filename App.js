@@ -43,6 +43,34 @@ const BG_SURFACE = '#222222';
 const TEXT_PRIMARY = '#F5F0E8';
 const TEXT_MUTED = '#8A8070';
 
+const rules = [
+  {
+    title: 'THE GOAL',
+    text: 'Be the player with the hand value closest to 31 in a single suit.',
+  },
+  {
+    title: 'SCORING',
+    text:
+      'Aces are worth 11 points.\nKings, Queens, and Jacks are worth 10 points.\nNumbered cards are worth their face value.\nThe score for your hand is the total value of cards of the same suit. For example, a hand with the ♠A, ♠K, and ♥5 would have a score of 21 (from the Ace and King of spades).\nA special hand of three-of-a-kind (e.g., three 7s) is worth 30.5 points.',
+  },
+  {
+    title: 'GAMEPLAY',
+    text:
+      'Each player is dealt a hand of 3 cards.\nOn your turn, you must draw one card, either the top card from the stock pile (face down) or the top card from the discard pile (face up).\nAfter drawing, you must choose one card from your hand to discard, placing it face up on the discard pile.',
+  },
+  {
+    title: 'KNOCKING',
+    text:
+      'On your turn, if you believe your hand is strong enough, you can knock *instead* of drawing a card. This signals the end of the round.\nAfter you knock, every other player gets one final turn to improve their hand. Then, all hands are revealed.',
+  },
+  {
+    title: 'WINNING & LOSING',
+    text:
+      'Generally, the player with the lowest score loses a life. If there\'s a tie for lowest, all tied players lose a life.\n\n**Knocking Penalty:** If you knock and fail to beat at least one other player (i.e., you have the lowest score, or are tied for the lowest score), you lose two lives.\n\n**Scat (31):** If a player achieves a score of exactly 31, the round ends immediately, and all other players lose a life.\n\nPlayers start with 4 lives. The last player with lives remaining wins the game!',
+  },
+];
+
+
 // ─── DECK UTILITIES ──────────────────────────────────────────────────────────
 function buildDeck() {
   const deck = [];
@@ -192,9 +220,10 @@ function ActionFeed({ actions, players }) {
 
 // ─── SCREENS ─────────────────────────────────────────────────────────────────
 
-function HomeScreen({ onNewGame }) {
+function HomeScreen({ onNewGame, onHelpPress }) {
   return (
     <SafeAreaView style={styles.safe}>
+      <HelpButton onPress={onHelpPress}/>
       <StatusBar barStyle="light-content" backgroundColor={BG_DARK} />
       <View style={styles.homeContainer}>
         <View style={styles.homeLogoArea}>
@@ -260,7 +289,7 @@ function ColorPickerModal({ onSelectColor, onCancel, playerSetups, currentPlayer
   );
 }
 
-function PlayerSetupScreen({ onStartGame, onExit }) {
+function PlayerSetupScreen({ onStartGame, onExit, onHelpPress }) {
   const [numPlayers, setNumPlayers] = useState(3);
   const [playerSetups, setPlayerSetups] = useState(
     PLAYER_COLORS.slice(0, 6).map((color, i) => ({
@@ -272,23 +301,19 @@ function PlayerSetupScreen({ onStartGame, onExit }) {
   const [colorPickerForPlayer, setColorPickerForPlayer] = useState(null);
 
   useEffect(() => {
-    // On player count change, ensure new players get a unique color
     setPlayerSetups(setups => {
       const newSetups = [...setups];
       const activeSetups = newSetups.slice(0, numPlayers);
       let activeColors = activeSetups.map(s => s.color);
 
-      // Find and resolve duplicate colors among active players
       for (let i = 0; i < numPlayers; i++) {
         const color = activeColors[i];
         const firstIndex = activeColors.indexOf(color);
 
         if (firstIndex !== i) {
-          // This player's color is a duplicate.
           const availableColor = PLAYER_COLORS.find(c => !activeColors.includes(c));
           if (availableColor) {
             newSetups[i].color = availableColor;
-            // Update activeColors for subsequent checks.
             activeColors[i] = availableColor;
           }
         }
@@ -305,19 +330,17 @@ function PlayerSetupScreen({ onStartGame, onExit }) {
 
   const updateColor = (playerIndex, newColor) => {
     const newSetups = [...playerSetups];
-
-    // Only check for colors used by *active* players.
     const activePlayerSetups = newSetups.slice(0, numPlayers);
     const currentUsedColors = activePlayerSetups.map(p => p.color);
     const playerColor = newSetups[playerIndex].color;
 
     if (currentUsedColors.includes(newColor) && newColor !== playerColor) {
-      return; // Color is taken, do nothing.
+      return;
     }
 
     newSetups[playerIndex].color = newColor;
     setPlayerSetups(newSetups);
-    setColorPickerForPlayer(null); // close picker
+    setColorPickerForPlayer(null);
   };
 
   const onStartGamePress = () => {
@@ -333,6 +356,7 @@ function PlayerSetupScreen({ onStartGame, onExit }) {
 
   return (
     <SafeAreaView style={styles.safe}>
+      <HelpButton onPress={onHelpPress} />
       <View style={styles.screenTopBar}>
         <Text style={styles.screenTitle}>PLAYER SETUP</Text>
         <TouchableOpacity onPress={onExit} style={styles.exitBtn}>
@@ -391,10 +415,10 @@ function PlayerSetupScreen({ onStartGame, onExit }) {
   );
 }
 
-
-function TurnGateScreen({ player, actions, players, onReveal, onExit }) {
+function TurnGateScreen({ player, actions, players, onReveal, onExit, onHelpPress }) {
   return (
     <SafeAreaView style={styles.safe}>
+      <HelpButton onPress={onHelpPress} />
       <View style={styles.screenTopBar}>
         <View style={{ flex: 1 }} />
         <TouchableOpacity onPress={onExit} style={styles.exitBtn}>
@@ -424,7 +448,7 @@ function TurnGateScreen({ player, actions, players, onReveal, onExit }) {
   );
 }
 
-function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickUp, onKnock, onDiscard, mustDiscard, hasKnocked, knockerName, knockRound, onExit }) {
+function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickUp, onKnock, onDiscard, mustDiscard, hasKnocked, knockerName, knockRound, onExit, onHelpPress }) {
   const score = handScore(hand);
   const [selectedCard, setSelectedCard] = useState(null);
 
@@ -441,6 +465,7 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
 
   return (
     <SafeAreaView style={styles.safe}>
+      <HelpButton onPress={onHelpPress} />
       <ScrollView contentContainerStyle={styles.boardContainer}>
         <View style={styles.boardTopBar}>
           <View>
@@ -538,9 +563,10 @@ function GameBoardScreen({ player, hand, topDiscard, stockCount, onDraw, onPickU
   );
 }
 
-function ScatSplashScreen({ winner, hand, onContinue }) {
+function ScatSplashScreen({ winner, hand, onContinue, onHelpPress }) {
   return (
     <SafeAreaView style={styles.safe}>
+      <HelpButton onPress={onHelpPress} />
       <StatusBar barStyle="light-content" backgroundColor={BG_DARK} />
       <View style={styles.scatContainer}>
         <Text style={styles.scatFireworks}>🃏</Text>
@@ -563,7 +589,7 @@ function ScatSplashScreen({ winner, hand, onContinue }) {
   );
 }
 
-function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNextRound, onExit }) {
+function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNextRound, onExit, onHelpPress }) {
   const scores = hands.map(h => handScore(h));
   const activePlayers = players.filter(p => p.lives > 0);
   const activeScores = scores.filter((_, i) => players[i].lives > 0);
@@ -571,6 +597,7 @@ function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNex
 
   return (
     <SafeAreaView style={styles.safe}>
+      <HelpButton onPress={onHelpPress} />
       <ScrollView contentContainerStyle={styles.summaryContainer}>
         <View style={styles.screenTopBar}>
           <Text style={styles.screenTitle}>ROUND SUMMARY</Text>
@@ -630,9 +657,10 @@ function RoundSummaryScreen({ players, hands, knockerId, instantWinnerIdx, onNex
   );
 }
 
-function GameOverScreen({ winner, onPlayAgain }) {
+function GameOverScreen({ winner, onPlayAgain, onHelpPress }) {
   return (
     <SafeAreaView style={styles.safe}>
+      <HelpButton onPress={onHelpPress} />
       <View style={styles.gameOverContainer}>
         <Text style={styles.gameOverEmoji}>🏆</Text>
         <Text style={styles.gameOverLabel}>WINNER</Text>
@@ -672,10 +700,42 @@ function ExitConfirmModal({ visible, onConfirm, onCancel }) {
   );
 }
 
+function RulesModal({ visible, onConfirm }) {
+  return (
+    <Modal transparent visible={visible} animationType="fade" onRequestClose={onConfirm}>
+      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onConfirm}>
+        <View style={[styles.modalBox, { maxHeight: '80%' }]} onStartShouldSetResponder={() => true}>
+          <Text style={styles.modalTitle}>HOW TO PLAY</Text>
+          <ScrollView contentContainerStyle={styles.rulesContent}>
+            {rules.map(rule => (
+              <View key={rule.title}>
+                <Text style={styles.rulesSectionTitle}>{rule.title}</Text>
+                <Text style={styles.rulesText}>{rule.text}</Text>
+              </View>
+            ))}
+          </ScrollView>
+          <TouchableOpacity style={[styles.goldButton, {marginTop: 20}]} onPress={onConfirm}>
+            <Text style={styles.goldButtonText}>GOT IT</Text>
+          </TouchableOpacity>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
+function HelpButton({ onPress }) {
+  return (
+    <TouchableOpacity onPress={onPress} style={styles.helpBtn}>
+      <Text style={styles.helpBtnText}>?</Text>
+    </TouchableOpacity>
+  );
+}
+
 // ─── MAIN APP ─────────────────────────────────────────────────────────────────
 export default function App() {
   const [screen, setScreen] = useState('home');
   const [showExitModal, setShowExitModal] = useState(false);
+  const [showRulesModal, setShowRulesModal] = useState(false);
   const [players, setPlayers] = useState([]);
   const [dealerIdx, setDealerIdx] = useState(0);
   const [currentPlayerIdx, setCurrentPlayerIdx] = useState(0);
@@ -690,9 +750,6 @@ export default function App() {
   const [instantWinnerIdx, setInstantWinnerIdx] = useState(null);
   const [finalHands, setFinalHands] = useState([]);
 
-  // ── Action history state
-  // actionLog: flat array of { playerIdx, type, card? } for the whole round
-  // watermarks: actionLog index per player — they see log[watermark[i]..] when their turn arrives
   const [actionLog, setActionLog] = useState([]);
   const [watermarks, setWatermarks] = useState([]);
 
@@ -737,8 +794,6 @@ export default function App() {
     setRoundOver(false);
     setInstantWinnerIdx(null);
     setFinalHands([]);
-
-    // Reset action log — empty log, watermarks all at 0 (see everything from start)
     setActionLog([]);
     setWatermarks(currentPlayers.map(() => 0));
 
@@ -753,21 +808,16 @@ export default function App() {
     return idx;
   };
 
-  // Append an action to the log and return the new log immediately
-  // (so callers don't have to wait for setState to resolve)
   const appendAction = (currentLog, playerIdx, type, card = null) => {
     return [...currentLog, { playerIdx, type, card }];
   };
 
-  // Stamp a watermark for playerIdx at the end of the current log,
-  // so next time it's their turn they only see actions logged after this moment.
   const stampWatermark = (playerIdx, logLength, currentWatermarks) => {
     const updated = [...currentWatermarks];
     updated[playerIdx] = logLength;
     return updated;
   };
 
-  // ── Draw from stock
   const handleDraw = () => {
     if (deck.length === 0) return;
     const [drawn, ...rest] = deck;
@@ -787,7 +837,6 @@ export default function App() {
     }
   };
 
-  // ── Pick up from discard pile
   const handlePickUp = () => {
     if (discardPile.length === 0) return;
     const top = discardPile[discardPile.length - 1];
@@ -808,7 +857,6 @@ export default function App() {
     }
   };
 
-  // ── Discard a card from hand
   const handleDiscard = (cardIdx) => {
     const discarded = hands[currentPlayerIdx][cardIdx];
     const newHands = hands.map((h, i) => {
@@ -840,7 +888,6 @@ export default function App() {
     }
   };
 
-  // ── Knock
   const handleKnock = () => {
     const newLog = appendAction(actionLog, currentPlayerIdx, 'knock');
     setActionLog(newLog);
@@ -851,7 +898,6 @@ export default function App() {
     advanceTurn(currentPlayerIdx, newLog);
   };
 
-  // Stamp this player's watermark at end of log, then move to next player
   const advanceTurn = (finishedPlayerIdx, currentLog) => {
     const newWatermarks = stampWatermark(finishedPlayerIdx, currentLog.length, watermarks);
     setWatermarks(newWatermarks);
@@ -874,13 +920,11 @@ export default function App() {
     let updatedPlayers;
 
     if (winnerIdx !== null) {
-      // Scat: every other active player loses 1 life
       updatedPlayers = players.map((p, i) => {
         if (p.lives <= 0 || i === winnerIdx) return p;
         return { ...p, lives: Math.max(0, p.lives - 1) };
       });
     } else {
-      // Normal: lowest score loses (or knocker loses 2 if they had the lowest)
       const scores = finalHandsArg.map((h, i) =>
         players[i].lives > 0 ? handScore(h) : Infinity
       );
@@ -921,104 +965,115 @@ export default function App() {
     setPlayers([]);
   };
 
-  // Build the action feed for the upcoming player at the gate screen:
-  // everything logged after their watermark, minus their own stock draws
   const buildFeedFor = (playerIdx) => {
     const watermark = watermarks[playerIdx] ?? 0;
     return getActionsForPlayer(actionLog, watermark, playerIdx);
   };
 
-  // ─── RENDER ──────────────────────────────────────────────────────────────
-  if (screen === 'home') {
-    return <HomeScreen onNewGame={() => setScreen('setup')} />;
+  const renderContent = () => {
+    if (screen === 'home') {
+      return <HomeScreen onNewGame={() => setScreen('setup')} onHelpPress={() => setShowRulesModal(true)} />;
+    }
+
+    if (screen === 'setup') {
+      return (
+        <>
+          <PlayerSetupScreen onStartGame={handleStartGame} onExit={() => setShowExitModal(true)} onHelpPress={() => setShowRulesModal(true)} />
+          <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
+        </>
+      );
+    }
+
+    if (screen === 'gate') {
+      const feedActions = buildFeedFor(currentPlayerIdx);
+      return (
+        <>
+          <TurnGateScreen
+            player={players[currentPlayerIdx]}
+            actions={feedActions}
+            players={players}
+            onReveal={() => setScreen('board')}
+            onExit={() => setShowExitModal(true)}
+            onHelpPress={() => setShowRulesModal(true)}
+          />
+          <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
+        </>
+      );
+    }
+
+    if (screen === 'board') {
+      const topDiscard = discardPile.length > 0 ? discardPile[discardPile.length - 1] : null;
+      return (
+        <>
+          <GameBoardScreen
+            player={players[currentPlayerIdx]}
+            hand={hands[currentPlayerIdx] || []}
+            topDiscard={topDiscard}
+            stockCount={deck.length}
+            onDraw={handleDraw}
+            onPickUp={handlePickUp}
+            onKnock={handleKnock}
+            onDiscard={handleDiscard}
+            mustDiscard={mustDiscard}
+            hasKnocked={knockRound}
+            knockerName={knockerId !== null ? players[knockerId]?.name : ''}
+            knockRound={knockRound}
+            onExit={() => setShowExitModal(true)}
+            onHelpPress={() => setShowRulesModal(true)}
+          />
+          <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
+        </>
+      );
+    }
+
+    if (screen === 'scat') {
+      return (
+        <>
+          <ScatSplashScreen
+            winner={players[instantWinnerIdx]}
+            hand={finalHands[instantWinnerIdx] || []}
+            onContinue={() => triggerSummary(finalHands, instantWinnerIdx)}
+            onHelpPress={() => setShowRulesModal(true)}
+          />
+          <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
+        </>
+      );
+    }
+
+    if (screen === 'summary') {
+      const summaryHands = finalHands.length > 0 ? finalHands : hands;
+      return (
+        <>
+          <RoundSummaryScreen
+            players={players}
+            hands={summaryHands}
+            knockerId={knockerId}
+            instantWinnerIdx={instantWinnerIdx}
+            onNextRound={handleNextRound}
+            onExit={() => setShowExitModal(true)}
+            onHelpPress={() => setShowRulesModal(true)}
+          />
+          <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
+        </>
+      );
+    }
+
+    if (screen === 'gameover') {
+      const winner = players.find(p => p.lives > 0);
+      return <GameOverScreen winner={winner} onPlayAgain={() => setScreen('home')} onHelpPress={() => setShowRulesModal(true)} />;
+    }
+
+    return null;
   }
 
-  if (screen === 'setup') {
-    return (
-      <>
-        <PlayerSetupScreen onStartGame={handleStartGame} onExit={() => setShowExitModal(true)} />
-        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
-      </>
-    );
-  }
-
-  if (screen === 'gate') {
-    const feedActions = buildFeedFor(currentPlayerIdx);
-    return (
-      <>
-        <TurnGateScreen
-          player={players[currentPlayerIdx]}
-          actions={feedActions}
-          players={players}
-          onReveal={() => setScreen('board')}
-          onExit={() => setShowExitModal(true)}
-        />
-        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
-      </>
-    );
-  }
-
-  if (screen === 'board') {
-    const topDiscard = discardPile.length > 0 ? discardPile[discardPile.length - 1] : null;
-    return (
-      <>
-        <GameBoardScreen
-          player={players[currentPlayerIdx]}
-          hand={hands[currentPlayerIdx] || []}
-          topDiscard={topDiscard}
-          stockCount={deck.length}
-          onDraw={handleDraw}
-          onPickUp={handlePickUp}
-          onKnock={handleKnock}
-          onDiscard={handleDiscard}
-          mustDiscard={mustDiscard}
-          hasKnocked={knockRound}
-          knockerName={knockerId !== null ? players[knockerId]?.name : ''}
-          knockRound={knockRound}
-          onExit={() => setShowExitModal(true)}
-        />
-        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
-      </>
-    );
-  }
-
-  if (screen === 'scat') {
-    return (
-      <>
-        <ScatSplashScreen
-          winner={players[instantWinnerIdx]}
-          hand={finalHands[instantWinnerIdx] || []}
-          onContinue={() => triggerSummary(finalHands, instantWinnerIdx)}
-        />
-        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
-      </>
-    );
-  }
-
-  if (screen === 'summary') {
-    const summaryHands = finalHands.length > 0 ? finalHands : hands;
-    return (
-      <>
-        <RoundSummaryScreen
-          players={players}
-          hands={summaryHands}
-          knockerId={knockerId}
-          instantWinnerIdx={instantWinnerIdx}
-          onNextRound={handleNextRound}
-          onExit={() => setShowExitModal(true)}
-        />
-        <ExitConfirmModal visible={showExitModal} onConfirm={handleExitToHome} onCancel={() => setShowExitModal(false)} />
-      </>
-    );
-  }
-
-  if (screen === 'gameover') {
-    const winner = players.find(p => p.lives > 0);
-    return <GameOverScreen winner={winner} onPlayAgain={() => setScreen('home')} />;
-  }
-
-  return null;
+  return (
+    <>
+      {renderContent()}
+      <RulesModal visible={showRulesModal} onConfirm={() => setShowRulesModal(false)} />
+    </>
+  );
 }
+
 
 // ─── STYLES ──────────────────────────────────────────────────────────────────
 const styles = StyleSheet.create({
@@ -1027,16 +1082,57 @@ const styles = StyleSheet.create({
     backgroundColor: BG_DARK,
     paddingTop: STATUSBAR_HEIGHT,
   },
+  helpBtn: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? STATUSBAR_HEIGHT + 16 : 16,
+    left: 16,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(0,0,0,0.3)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderColor: '#555',
+    borderWidth: 1,
+    zIndex: 1000,
+  },
+  helpBtnText: {
+    color: TEXT_PRIMARY,
+    fontSize: 20,
+    fontWeight: 'bold',
+    fontFamily: 'Georgia',
+  },
+  rulesContent: {
+    paddingRight: 10, // For scrollbar
+  },
+  rulesSectionTitle: {
+    color: GOLD,
+    fontSize: 16,
+    fontWeight: 'bold',
+    letterSpacing: 1,
+    marginTop: 16,
+    marginBottom: 8,
+    fontFamily: 'Georgia',
+  },
+  rulesText: {
+    color: TEXT_MUTED,
+    fontSize: 14,
+    lineHeight: 22,
+    fontFamily: 'Georgia',
+  },
 
   screenTopBar: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
+    justifyContent: 'center',
     paddingHorizontal: 16,
     paddingTop: 16,
     paddingBottom: 12,
   },
   exitBtn: {
+    position: 'absolute',
+    top: Platform.OS === 'android' ? STATUSBAR_HEIGHT + 16 : 16,
+    right: 16,
     paddingVertical: 6,
     paddingHorizontal: 12,
     borderRadius: 8,
@@ -1168,6 +1264,7 @@ const styles = StyleSheet.create({
     letterSpacing: 4,
     fontFamily: 'Georgia',
     marginBottom: 12,
+    textAlign: 'center',
   },
   modalBody: {
     color: TEXT_MUTED,
@@ -1309,6 +1406,7 @@ const styles = StyleSheet.create({
     letterSpacing: 4,
     textAlign: 'center',
     fontFamily: 'Georgia',
+    flex: 1,
   },
   divider: {
     height: 1,
