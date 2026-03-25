@@ -1084,7 +1084,7 @@ const styles = StyleSheet.create({
   },
   helpBtn: {
     position: 'absolute',
-    top: Platform.OS === 'android' ? STATUSBAR_HEIGHT + 16 : 16,
+    bottom: 16,
     left: 16,
     width: 40,
     height: 40,
