@@ -22,7 +22,18 @@ const SUITS = ['♠', '♥', '♦', '♣'];
 const RANKS = ['A', '2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K'];
 const RED_SUITS = ['♥', '♦'];
 
-const PLAYER_COLORS = ['#2DD4BF', '#F87171', '#FBBF24', '#A78BFA', '#34D399', '#FB7185'];
+const PLAYER_COLORS = [
+  '#2DD4BF', // Teal
+  '#F53827', // Red
+  '#FBBF24', // Amber
+  '#B2BEB5', // Grey
+  '#6F4E37', // Orange
+  '#EC4899', // Hot Pink
+  '#BB27F5', // Indigo
+  '#A3E635', // Lime Green
+  '#FCC0BB', // Light Red
+  '#2761F5', // Dark blue
+];
 
 const GOLD = '#D4A843';
 const GOLD_LIGHT = '#F0C96A';
@@ -67,7 +78,12 @@ function handScore(hand) {
   for (const suit of SUITS) {
     const suitCards = hand.filter(c => c.suit === suit);
     const total = suitCards.reduce((s, c) => s + cardValue(c), 0);
-    if (total > best) best = total;
+
+    if (total === 31 && suitCards.length !== 3) {
+      best = Math.max(best, 30);
+    } else {
+      best = Math.max(best, total);
+    }
   }
   return best;
 }
@@ -206,15 +222,114 @@ function HomeScreen({ onNewGame }) {
   );
 }
 
+function ColorPickerModal({ onSelectColor, onCancel, playerSetups, currentPlayerIndex }) {
+  const currentUsedColors = playerSetups.map(p => p.color);
+  const playerColor = playerSetups[currentPlayerIndex].color;
+
+  return (
+    <Modal transparent visible={true} animationType="fade" onRequestClose={onCancel}>
+      <TouchableOpacity style={styles.modalOverlay} activeOpacity={1} onPress={onCancel}>
+        <View style={styles.colorPickerBox} onStartShouldSetResponder={() => true}>
+          <Text style={styles.modalTitle}>CHOOSE A COLOR</Text>
+          <View style={styles.colorGrid}>
+            {PLAYER_COLORS.map(color => {
+              const isUsed = currentUsedColors.includes(color) && color !== playerColor;
+              return (
+                <TouchableOpacity
+                  key={color}
+                  onPress={() => {
+                    if (!isUsed) {
+                      onSelectColor(color);
+                    }
+                  }}
+                  style={[
+                    styles.colorCell,
+                    { backgroundColor: color },
+                    isUsed && styles.disabledColorCell,
+                  ]}
+                >
+                  {color === playerColor && <Text style={styles.checkMark}>✓</Text>}
+                  {isUsed && <Text style={styles.crossMark}>✕</Text>}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        </View>
+      </TouchableOpacity>
+    </Modal>
+  );
+}
+
 function PlayerSetupScreen({ onStartGame, onExit }) {
   const [numPlayers, setNumPlayers] = useState(3);
-  const [names, setNames] = useState(PLAYER_COLORS.map((_, i) => `Player ${i + 1}`));
+  const [playerSetups, setPlayerSetups] = useState(
+    PLAYER_COLORS.slice(0, 6).map((color, i) => ({
+      name: `Player ${i + 1}`,
+      color: color,
+    }))
+  );
+
+  const [colorPickerForPlayer, setColorPickerForPlayer] = useState(null);
+
+  useEffect(() => {
+    // On player count change, ensure new players get a unique color
+    setPlayerSetups(setups => {
+      const newSetups = [...setups];
+      const activeSetups = newSetups.slice(0, numPlayers);
+      let activeColors = activeSetups.map(s => s.color);
+
+      // Find and resolve duplicate colors among active players
+      for (let i = 0; i < numPlayers; i++) {
+        const color = activeColors[i];
+        const firstIndex = activeColors.indexOf(color);
+
+        if (firstIndex !== i) {
+          // This player's color is a duplicate.
+          const availableColor = PLAYER_COLORS.find(c => !activeColors.includes(c));
+          if (availableColor) {
+            newSetups[i].color = availableColor;
+            // Update activeColors for subsequent checks.
+            activeColors[i] = availableColor;
+          }
+        }
+      }
+      return newSetups;
+    });
+  }, [numPlayers]);
 
   const updateName = (idx, val) => {
-    const n = [...names];
-    n[idx] = val;
-    setNames(n);
+    const newSetups = [...playerSetups];
+    newSetups[idx].name = val;
+    setPlayerSetups(newSetups);
   };
+
+  const updateColor = (playerIndex, newColor) => {
+    const newSetups = [...playerSetups];
+
+    // Only check for colors used by *active* players.
+    const activePlayerSetups = newSetups.slice(0, numPlayers);
+    const currentUsedColors = activePlayerSetups.map(p => p.color);
+    const playerColor = newSetups[playerIndex].color;
+
+    if (currentUsedColors.includes(newColor) && newColor !== playerColor) {
+      return; // Color is taken, do nothing.
+    }
+
+    newSetups[playerIndex].color = newColor;
+    setPlayerSetups(newSetups);
+    setColorPickerForPlayer(null); // close picker
+  };
+
+  const onStartGamePress = () => {
+    onStartGame(
+      playerSetups.slice(0, numPlayers).map(setup => ({
+        ...setup,
+        lives: 4,
+      }))
+    );
+  };
+
+  const currentPlayersSetup = playerSetups.slice(0, numPlayers);
 
   return (
     <SafeAreaView style={styles.safe}>
@@ -240,12 +355,14 @@ function PlayerSetupScreen({ onStartGame, onExit }) {
         <View style={styles.divider} />
         {Array.from({ length: numPlayers }).map((_, i) => (
           <View key={i} style={styles.playerRow}>
-            <View style={[styles.colorBadge, { backgroundColor: PLAYER_COLORS[i] }]}>
-              <Text style={styles.colorBadgeText}>{i + 1}</Text>
-            </View>
+            <TouchableOpacity onPress={() => setColorPickerForPlayer(i)}>
+              <View style={[styles.colorBadge, { backgroundColor: playerSetups[i].color }]}>
+                <Text style={styles.colorBadgeText}>{i + 1}</Text>
+              </View>
+            </TouchableOpacity>
             <TextInput
               style={styles.nameInput}
-              value={names[i]}
+              value={playerSetups[i].name}
               onChangeText={v => updateName(i, v)}
               placeholderTextColor={TEXT_MUTED}
               maxLength={16}
@@ -254,22 +371,26 @@ function PlayerSetupScreen({ onStartGame, onExit }) {
         ))}
         <TouchableOpacity
           style={[styles.goldButton, { marginTop: 32 }]}
-          onPress={() =>
-            onStartGame(
-              Array.from({ length: numPlayers }).map((_, i) => ({
-                name: names[i] || `Player ${i + 1}`,
-                color: PLAYER_COLORS[i],
-                lives: 4,
-              }))
-            )
-          }
+          onPress={onStartGamePress}
         >
           <Text style={styles.goldButtonText}>START GAME</Text>
         </TouchableOpacity>
       </ScrollView>
+      {colorPickerForPlayer !== null && (
+        <ColorPickerModal
+          visible={true}
+          onCancel={() => setColorPickerForPlayer(null)}
+          onSelectColor={color => {
+            updateColor(colorPickerForPlayer, color);
+          }}
+          playerSetups={currentPlayersSetup}
+          currentPlayerIndex={colorPickerForPlayer}
+        />
+      )}
     </SafeAreaView>
   );
 }
+
 
 function TurnGateScreen({ player, actions, players, onReveal, onExit }) {
   return (
@@ -972,6 +1093,52 @@ const styles = StyleSheet.create({
     fontWeight: '700',
   },
 
+  // ── COLOR PICKER ──
+  colorPickerBox: {
+    backgroundColor: BG_SURFACE,
+    borderRadius: 20,
+    borderWidth: 1,
+    borderColor: GOLD,
+    padding: 28,
+    width: '100%',
+    alignItems: 'center',
+  },
+  colorGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    gap: 12,
+    marginTop: 20,
+  },
+  colorCell: {
+    width: 48,
+    height: 48,
+    borderRadius: 24,
+    borderWidth: 2,
+    borderColor: 'transparent',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  disabledColorCell: {
+    opacity: 0.2,
+  },
+  checkMark: {
+    color: '#FFF',
+    fontSize: 24,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(0, 0, 0, 0.5)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+  crossMark: {
+    color: '#000',
+    fontSize: 28,
+    fontWeight: 'bold',
+    textShadowColor: 'rgba(255, 255, 255, 0.7)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 2,
+  },
+
   // ── MODAL ──
   modalOverlay: {
     flex: 1,
@@ -1209,7 +1376,7 @@ const styles = StyleSheet.create({
   stepperBtnText: { color: '#0F0F0F', fontSize: 20, fontWeight: '800', lineHeight: 24 },
   stepperValue: { color: GOLD, fontSize: 24, fontWeight: '800', fontFamily: 'Georgia', minWidth: 28, textAlign: 'center' },
   playerRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 12, gap: 12 },
-  colorBadge: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center' },
+  colorBadge: { width: 36, height: 36, borderRadius: 18, alignItems: 'center', justifyContent: 'center', borderWidth: 1, borderColor: 'rgba(255,255,255,0.2)'},
   colorBadgeText: { color: '#0F0F0F', fontWeight: '800', fontSize: 16, fontFamily: 'Georgia' },
   nameInput: {
     flex: 1,
