@@ -148,11 +148,8 @@ export default function App() {
     const newLog = appendAction(currentLog, currentPlayerIdx, 'draw_stock');
     setActionLog(newLog);
 
-    if (handScore(newHands[currentPlayerIdx]) === 31) {
-      endRound(newHands, currentPlayerIdx, newLog);
-    } else {
-      setMustDiscard(true);
-    }
+    // Always require a discard — scat will be checked after discard
+    setMustDiscard(true);
   };
 
   // ── Pick up from discard pile
@@ -169,11 +166,8 @@ export default function App() {
     const newLog = appendAction(actionLog, currentPlayerIdx, 'pickup_discard', top);
     setActionLog(newLog);
 
-    if (handScore(newHands[currentPlayerIdx]) === 31) {
-      endRound(newHands, currentPlayerIdx, newLog);
-    } else {
-      setMustDiscard(true);
-    }
+    // Always require a discard — scat will be checked after discard
+    setMustDiscard(true);
   };
 
   // ── Discard a card from hand
@@ -254,23 +248,34 @@ export default function App() {
         return { ...p, lives: Math.max(0, p.lives - 1) };
       });
     } else {
-      // Normal: lowest score loses (or knocker loses 2 if they had the lowest)
+      // Normal: knocker loses 2 if they didn't beat anyone
+      // Non-knockers lose 1 if they have lowest score and aren't tied with knocker
       const scores = finalHandsArg.map((h, i) =>
         players[i].lives > 0 ? handScore(h) : Infinity
       );
       const minScore = Math.min(...scores.filter(s => s !== Infinity));
       const knocker = knockerId;
+      const knockerScore = knocker !== null ? scores[knocker] : Infinity;
+      const beatsSomeone = knocker !== null && scores.some((s, i) => i !== knocker && players[i].lives > 0 && knockerScore < s);
 
       updatedPlayers = players.map((p, i) => {
         if (p.lives <= 0) return p;
-        const isLowest = scores[i] === minScore;
+        
         const wasKnocker = i === knocker;
-        const lostTwo = wasKnocker && isLowest && activePlayers.length > 1;
-        const lostOne = isLowest && !lostTwo;
-        let newLives = p.lives;
-        if (lostTwo) newLives = Math.max(0, newLives - 2);
-        else if (lostOne) newLives = Math.max(0, newLives - 1);
-        return { ...p, lives: newLives };
+        
+        if (wasKnocker) {
+          // Knocker loses 2 if they didn't beat anyone
+          return { ...p, lives: Math.max(0, p.lives - (beatsSomeone ? 0 : 2)) };
+        } else {
+          // Non-knocker loses 1 if they have lowest score and are not tied with knocker
+          const isLowest = scores[i] === minScore;
+          const tiedWithKnocker = knocker !== null && scores[i] === knockerScore;
+          
+          if (isLowest && !tiedWithKnocker) {
+            return { ...p, lives: Math.max(0, p.lives - 1) };
+          }
+          return p;
+        }
       });
     }
 
